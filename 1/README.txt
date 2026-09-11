@@ -59,5 +59,13 @@ To load on the cluster
 module load mace-lmp/0.3.16.g
 
 To run:
-mpirun -np 1 lmp-dispatch -h     
+------
+mpirun -np $SLURM_NTASKS lmp-dispatch -h  
+(I didn't have an input file, but if you were to have one e.g. mace.inp , you can use:
+mpirun -np $SLURM_NTASKS lmp-dispatch -in mace.inp
+
+To inspect the container:
+------------------------
+If you want to look into/inspect the sif file:
+singularity inspect lmg.sif
 

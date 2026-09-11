@@ -1,0 +1,12 @@
+Job started at Fri Sep 11 16:16:24 MDT 2026
+  Job Id: 28278678
+  Hostname: kp359
+  Input file: /uufs/chpc.utah.edu/common/home/u0253283/TestBench/Chem/lammps-mace/p100/in.mace_off23.lammps
+  #Threads: 6
+  mpirun:
+mpirun ()
+{ 
+    singularity exec --nv /uufs/chpc.utah.edu/sys/installdir/r8/mace-lmp/0.3.16/lmg_older.sif mpirun $@
+}
+Job ended at Fri Sep 11 17:48:47 MDT 2026
+Elapsed time:0d 1h 32m 24s 897ms

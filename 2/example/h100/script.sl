@@ -1,0 +1,36 @@
+#!/bin/bash
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=8
+#SBATCH --mem=80GB
+#SBATCH --cluster=granite
+#SBATCH --account=chpc
+#SBATCH --partition=granite-gpu
+#SBATCH --qos=granite-gpu
+#SBATCH --gres=gpu:h100nvl:1
+#SBATCH --job-name=mace-h100
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=<----
+
+export WORKDIR=$HOME/TestBench/Chem/lammps-mace/h100
+export INPUTFILE=$WORKDIR/in.mace_off23.lammps
+export OMP_NUM_THREADS=$SLURM_NTASKS
+
+printf "Job started at %s\n"  "$(date)"
+printf "  Job Id: %s\n"       "$SLURM_JOBID"
+printf "  Hostname: %s\n"     "$(hostname)"
+printf "  Input file: %s\n"   "$INPUTFILE"
+printf "  #Threads: %s\n"     "$OMP_NUM_THREADS"
+
+module load mace-lmp/0.3.16.g.b
+printf "  mpirun:\n%s\n"      "$(which mpirun)"
+# In order to run, I invoked --cleanenv  
+# To make the OMP_NUM_THREADS again visible to LAMMPS
+# use the following construct 
+export APPTAINERENV_OMP_NUM_THREADS=$OMP_NUM_THREADS
+
+mpirun -np 1 lmp-dispatch -in $INPUTFILE >& log.$SLURM_JOBID.lammps
+
+
+printf "Job ended at %s\n" "$(date)"
+

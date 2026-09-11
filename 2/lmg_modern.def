@@ -1,0 +1,269 @@
+# lmg_modern.def - Apptainer recipe to build LAMMPS/MACE (for GPUs) 
+#
+# Latest update: (09/10/2026)
+#   lmg.def has been split into lmg_modern.def && lmg_older.def
+#       lmg_older.def  : SM_{50,52,53,60,61,70}
+#       lmg_modern.def : SM_{75,80,86,89,90,100,120}
+#
+# Build:
+#    apptainer build \
+#         --build-arg BUILD_DATE="$(date +%Y-%m-%d)" \
+#         --build-arg NTASKS="$NTASKS" \
+#         --build-arg ARCH="$ARCH" \
+#           lmg_modern.sif lmg_modern.def
+#
+#    NOTE: This file expects to be invoked via build_lmg.sh, which
+#    validates ARCH against LAMMPS/Kokkos recognized GPU architecture
+#    names (VALID_GPU_ARCHES). If lmg.def is invoked directly with an
+#    unrecognized ARCH, CMake will NOT error - it will silently define an
+#    unused Kokkos_ARCH_<ARCH> variable, producing a container with no
+#    actual architecture-specific GPU code generation. Do not bypass the
+#    wrapper script.
+
+# To run:
+#    apptainer exec --nv [OPTIONS] lmg.sif <cmd>
+#
+#    NOTE on --cleanenv:
+#      - By default, apptainer inherits most host environment variables
+#        (PATH, LD_LIBRARY_PATH, HOME, etc.) into the container.
+#      - Passing --cleanenv strips those host variables instead of
+#        inheriting them. TERM and APPTAINER_APPNAME are always kept
+#        regardless. The container own %environment section is
+#        applied either way. 
+
+
+
+### ===== HEADER PART =======
+# lmg_modern.def
+Bootstrap: localimage
+From: base_modern.sif
+
+
+
+### ===== BODY PART =========
+
+# NOTE (on arguments)
+#  The %arguments section contains the arguments to be used later on
+%arguments
+   MACE_VERSION=0.3.16
+   CUDA_VERSION=12.8
+
+
+# NOTE (on labels section):
+#   - Labels MUST be added as (key value) pairs. 
+#   - The  %labels section is static. 
+#   - You can investigate the labels as follows:
+#     apptainer inspect --labels <sif-file>
+%labels
+    Author            "Wim R.M. Cardoen"
+    Institution       "CHPC - University of Utah"
+    Date              {{ BUILD_DATE }}
+    MACE_VERSION      {{ MACE_VERSION }}
+    CUDA_VERSION      {{ CUDA_VERSION }}
+    ARCHITECTURES     {{ ARCH }}
+
+# NOTE (on %post section)
+#   - This section has the detailed instructions on the installation
+#   - Env. variables from the HOST are NOT passed into the container build
+#   - Concerning environmental variables to be added to the container
+#     a. YOU MUST redirect them to the SINGULARITY_ENVIRONMENT (see below)
+#     b. Take precedence over those added in the %environment section
+%post
+
+    set -eu
+
+    printf "\n\n*** TOOLs & COMPILERS ***\n"
+    printf "  gcc: %s\n"             "$(gcc --version)"
+    printf "  g++: %s\n"             "$(g++ --version)"
+    printf "  gfortran: %s\n"        "$(gfortran --version)"
+    printf "  python3: %s\n"         "$(python3 --version)"
+
+    printf "  which mpicc:%s\n"      "$(which mpicc)"
+    printf "  which mpicxx:%s\n"     "$(which mpicxx)"
+    printf "  which mpirun:%s\n"     "$(which mpirun)"
+    printf "  ompi_info:\n%s\n\n\n"  "$(ompi_info | head -20)"
+
+
+
+    # ── LAMMPS ─────────────────────────────────────────────────────
+    printf "\n\n*** LAMMPS/MACE INSTALLATION ***\n"
+    printf "        Architecture: %s\n" " {{ ARCH }} "
+    cd /opt
+    git clone --branch=mace --depth=1 https://github.com/ACEsuit/lammps
+
+    # Compilation flags
+    # X64_64 & gcc>=11
+    #   -march=x86-64-v2  means the inclusion of SSE3/SSSE3/SSE4.1/SSE4.2/POPCNT
+    export CFLAGS="-O2 -march=x86-64-v2"
+    export CXXFLAGS="-O2 -march=x86-64-v2"
+    export FCFLAGS="-O2 -march=x86-64-v2"
+
+    # Kokkos nvcc_wrapper must be invoked THROUGH the MPI compiler
+    # wrapper (mpicxx), not used as CMAKE_CXX_COMPILER directly, or
+    # MPI include/link flags never make it into the build despite
+    # BUILD_MPI=ON.
+    export OMPI_CXX=/opt/lammps/lib/kokkos/bin/nvcc_wrapper
+
+    for arch in {{ ARCH }}
+    do
+        installdir=/opt/lammps/pkg/$arch
+        printf "\n\n  Start Building LAMMPS/MACE for arch. %s ...\n"  "$arch"
+        printf "    ->  Installation dir.:%s\n"  "$installdir" 
+        
+        cd /opt/lammps
+        mkdir build && cd build
+        cmake \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D CMAKE_INSTALL_PREFIX=$installdir \
+            -D CMAKE_CXX_STANDARD=17 \
+            -D CMAKE_CXX_STANDARD_REQUIRED=ON \
+            -D BUILD_MPI=ON \
+            -D BUILD_SHARED_LIBS=ON \
+            -D BUILD_OMP=ON \
+            -D PKG_MOLECULE=ON \
+            -D PKG_MANYBODY=ON \
+            -D PKG_MC=ON \
+            -D PKG_MISC=ON \
+            -D PKG_MOLFILE=ON \
+            -D PKG_RIGID=ON \
+            -D PKG_EXTRA-FIX=ON \
+            -D PKG_EXTRA-COMPUTE=ON \
+            -D PKG_EXTRA-DUMP=ON \
+            -D PKG_EXTRA-PAIR=ON \
+            -D PKG_REPLICA=ON \
+            -D PKG_KSPACE=ON \
+            -D PKG_KOKKOS=ON \
+            -D Kokkos_ENABLE_CUDA=ON \
+            -D Kokkos_ARCH_NATIVE=OFF \
+            -D FFT=MKL \
+            -D FFT_KOKKOS=CUFFT \
+            -D Kokkos_ARCH_$arch=ON \
+            -D CMAKE_PREFIX_PATH="/opt/libtorch-gpu;/opt/intel/oneapi/mkl/latest" \
+            -D CMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda-12.8/targets/x86_64-linux/lib/stubs -lcuda" \
+            -D CMAKE_SHARED_LINKER_FLAGS="-L/usr/local/cuda-12.8/targets/x86_64-linux/lib/stubs -lcuda" \
+            -D PKG_ML-MACE=ON \
+            ../cmake
+        make -j {{ NTASKS }}
+        make install 
+        rm -rf /opt/lammps/build
+
+        printf "  End Building LAMMPS/MACE for arch. %s ...\n"  "$arch"
+    done 
+
+
+    
+    printf "\n\n*** CREATE DISPATCHER ***\n"
+    # NOTE:
+    #   We have different versions of lmp i.e. one for each GPU architecture.
+    mkdir -p /opt/lammps/bin
+
+    cat > /opt/lammps/bin/lmp-dispatch << 'EOF'
+#!/bin/bash
+arch=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | tail -n1 | tr -d '.')
+case "$arch" in
+  75) ARCHDIR=TURING75     ;;
+  80) ARCHDIR=AMPERE80     ;;
+  86) ARCHDIR=AMPERE86     ;;
+  89) ARCHDIR=ADA89        ;;
+  90) ARCHDIR=HOPPER90     ;;
+ 100) ARCHDIR=BLACKWELL100 ;;
+ 120) ARCHDIR=BLACKWELL120 ;;
+  *)  echo "Unsupported compute capability: $arch" >&2; exit 1 ;;
+esac
+export LD_LIBRARY_PATH="/opt/lammps/pkg/${ARCHDIR}/lib:${LD_LIBRARY_PATH}"
+exec "/opt/lammps/pkg/${ARCHDIR}/bin/lmp" "$@"
+EOF
+
+    chmod +x /opt/lammps/bin/lmp-dispatch
+    printf "\n\n***END OF DISPATCHER ***\n"
+
+
+    
+    echo "*** START CLEANUP ***"
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf \
+        /var/lib/apt/lists/* \
+        /var/cache/apt/*.bin \
+        /var/cache/apt/archives/* 
+
+    # Set the exact timestamp of creation in the container
+    echo "export CONTAINER_TIMESTAMP=\"$(date)\"" >> /.singularity.d/env/90-environment.sh
+    
+
+
+
+# NOTE (on %environment section)
+#  - contains environmental variables AVAILABLE at RUNTIME, NOT at build time
+#  - if you need the same envivronmental variables at BUILD time, put them in the %post section. 
+#    a. Apptainer utilizes the hosts unpriviliged user namespace (setuid wrapper) 
+#       in order to avoid requiring root access
+#    
+%environment
+    # TORCH
+    export LD_LIBRARY_PATH=/opt/libtorch-gpu/lib:$LD_LIBRARY_PATH
+
+    # do NOT set LD_LIBRARY_PATH for the lammps libs here.
+    # that part is intentionally resolved at container-runtime by the dispatcher
+    export PATH=/opt/lammps/bin:$PATH
+
+    # Prevents mpirun-inside-container from autodetecting a salloc/srun
+    # allocation SLURM_* env vars and trying to launch via the
+    # container-internal "slurm" plm component, which shells out to
+    # srun - not present inside the container, causing a crash. Only
+    # relevant to the mpirun-inside-container fallback pattern below;
+    # has no effect on the recommended srun+PMIx pattern, which never
+    # invokes mpirun at all.
+    export OMPI_MCA_plm=^slurm
+
+# NOTE (on %runscript section)
+#   - Will directly run apptainer <container> -> execute commands
+#   -  
+# 
+#%runscript
+#    
+
+
+
+# NOTE (on %help section)
+#    
+%help
+    Apptainer container for LAMMPS/MACE GPU.
+
+    RECOMMENDED launch (host-side Slurm + PMIx, one container per rank):
+        srun -n $SLURM_NTASKS singularity exec --nv lmg.sif lmp -in in.file
+
+    FALLBACK launch (mpirun inside the container):
+        singularity exec --nv lmg.sif mpirun -np $SLURM_NTASKS lmp -in in.file
+
+        NOTE: under a salloc/srun allocation, SLURM_* env vars are
+        visible inside the container by default and can make mpirun
+        try to launch via srun (not present in the container),
+        causing a crash. %environment sets OMPI_MCA_plm=^slurm to
+        prevent this, so no extra flags should be needed. If you
+        still see "srun: not found" or a segfault, add:
+            SINGULARITYENV_OMPI_MCA_plm=^slurm
+        explicitly, or fall back to:
+            singularity exec --cleanenv --nv lmg.sif mpirun -np N lmp ...
+        (note --cleanenv also drops CUDA_VISIBLE_DEVICES and any
+        other host env vars you may be relying on - re-inject them
+        via SINGULARITYENV_<VAR> if needed).
+
+    NOTE:
+    a. The container needs CUDA/{{ CUDA_VERSION }} loaded BEFORE the
+       container is invoked. The LAMMPS executable requires libcuda.so
+       at runtime; at build time a libcuda.so stub was used instead.
+    b. The --nv flag must be passed on every `apptainer exec`/`run`
+       invocation so the host real GPU driver libraries are bound
+       into the container (the stub used at build time is not
+       sufficient at runtime).
+    c. For multi-node jobs, the srun+PMIx pattern above requires the
+       container OpenMPI PMIx to be ABI-compatible with the host
+       Slurm PMIx plugin. This has been validated single-node on
+       Notchpeak; re-verify on any new cluster/Slurm build before
+       relying on it for production multi-node runs.
+
+%test
+    set -eu
+    printf "Container was created @ %s\n"  "$(date)"
+

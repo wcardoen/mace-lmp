@@ -1,0 +1,11 @@
+Job started at Fri Sep 11 15:08:05 MDT 2026
+  Job Id: 1948241
+  Hostname: grn008
+  Input file: /uufs/chpc.utah.edu/common/home/u0253283/TestBench/Chem/lammps-mace/h100/in.mace_off23.lammps
+  #Threads: 8
+  mpirun:
+mpirun ()
+{ 
+    singularity exec --nv /uufs/chpc.utah.edu/sys/installdir/r8/mace-lmp/0.3.16/lmg_modern.sif mpirun $@
+}
+Job ended at Fri Sep 11 15:30:46 MDT 2026

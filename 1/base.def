@@ -1,0 +1,317 @@
+# base.def - Apptainer recipe for the BASE installation
+# Written by Wim R.M. Cardoen 
+# Last update: 08/28/2026
+# The BASE installation consists of:
+#     - CUDATOOLKIT 12.8 (GPU)
+#     - LIBTORCH (GPU)
+#     - INTEL MKL
+#     - OPENMPI
+
+# Build:
+#     apptainer build --build-arg BUILD_DATE="$(date +%Y-%m-%d)"\
+#                     --build-arg NTASKS=$NTASKS base.sif base.def
+
+# To run:
+#    apptainer exec [OPTIONS] base.sif
+#
+#    NOTE:
+#      - apptainer inherits most of the env. variables      
+#        OPTIONS: --cleanenv : will remove most of the host env. variables into the container
+#                               (e.g. PATH, LD_LIBRARY_PATH, HOME). .bashrc
+#                               but TERM and APPTAINER_APPNAME will be kept.
+
+
+
+
+### ===== HEADER PART =======
+Bootstrap: docker
+From: ubuntu:{{ UBUNTU_VERSION }}
+
+
+
+
+### ===== BODY PART =========
+
+# NOTE (on arguments)
+#  The %arguments section contains the arguments to be used later on
+%arguments
+   UBUNTU_VERSION=24.04
+   BASE_VERSION=1.0.0
+   OPENMPI_VERSION="5.0.10"
+   OPENMPI_SHA256="5692cc80554a7117c99eaa725d35100edd8bbf73423a5e265ff867979192df7d"
+   UCX_VERSION="1.19.0"
+   UCX_SHA256="9af07d55281059542f20c5b411db668643543174e51ac71f53f7ac839164f285"
+
+
+
+# NOTE (on labels section):
+#   - Labels MUST be added as (key value) pairs.
+#   - The %labels section is static.
+#   - You can investigate the labels as follows:
+#     apptainer inspect --labels <sif-file>
+#   - NOTE: base.sif intentionally has NO %help/%test-visible metadata beyond
+#     labels. compound.def bootstraps `From: base.sif` and adds its own
+#     %help/%labels; if base.sif already defined %help or overlapping label
+#     keys, Apptainer will NOT overwrite them (without --force), which is
+#     why those sections were removed from base.def rather than duplicated.
+%labels
+    Institution       "CHPC - University of Utah"
+    BASE_VERSION      {{ BASE_VERSION }}
+    UBUNTU_VERSION    {{ UBUNTU_VERSION }}
+    BUILD_DATE        {{ BUILD_DATE }}
+
+
+
+# NOTE (on %post section)
+#   - This section has the detailed instructions on the installation
+#   - Environmental variables from the HOST are NOT passed into the container build
+#   - Concerning environmental variables to be added to the container
+#     a. YOU MUST redirect them to the SINGULARITY_ENVIRONMENT (see below)
+#     b. Take precedence over those added in the %environment section
+#   - set -euo pipefail: Apptainer %post does NOT abort on error by default.
+#     Without this, a failed wget/apt-get/make can silently continue and
+#     still produce a "successful" SIF with a broken or incomplete install.
+%post
+
+    set -eu
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Upgrade Ubuntu 
+    apt-get -y update
+    apt-get -y upgrade
+
+    printf "\n\n*** PREREQS ***\n"
+    # ── system tools ───────────────────────────────────────────────
+    printf "\n\nInstallation of the system tools\n"
+    apt-get install -y \
+        software-properties-common \
+        apt-utils ca-certificates \
+        locales tzdata 
+
+    # ── set the local time zone ────────────────────────────────────
+    ln -fs /usr/share/zoneinfo/America/Denver /etc/localtime
+    dpkg-reconfigure --frontend noninteractive tzdata
+
+    # ── archive and transfer tools ─────────────────────────────────
+    printf "\n\nInstallation of archive and transfer tools\n"
+    apt-get install -y --no-install-recommends \
+        curl wget which file git \
+        zip unzip bzip2 tar
+
+    # ── compiler and building tools ────────────────────────────────
+    printf "\n\nInstallation of the building tools\n"
+    apt-get install -y build-essential cmake pkg-config
+
+    printf "\n\nInstallation of the compilers (C,C++,Fortran)\n"
+    apt-get -y install gcc g++ gfortran
+    printf "  gcc: %s\n"        "$(gcc --version)"
+    printf "  g++: %s\n"        "$(g++ --version)"
+    printf "  gfortran: %s\n"   "$(gfortran --version)"
+
+    printf "\n\nInstallation of Python\n"
+    apt-get install -y python3 python3-dev python3-pip python3-venv
+    printf "  python3: %s\n"    "$(python3 --version)"
+
+    locale-gen en_US.UTF-8
+    printf "*** END OF PREREQS ***\n" 
+
+    
+    printf "\n\n*** BASE INSTALLATION ***\n" 
+
+    # ── CUDATOOLKIT ────────────────────────────────────────────────
+    printf "\n\nInstallation of CUDA 12.8 Toolkit\n"
+    cd /opt
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+    # WRC -> TODO(reproducibility): pin/verify with a known-good hash, e.g.:
+    #   echo "<expected-sha256>  cuda-keyring_1.1-1_all.deb" | sha256sum -c 
+    dpkg -i cuda-keyring_1.1-1_all.deb
+    apt-get update
+    apt-get -y install cuda-toolkit-12-8
+    export PATH=/usr/local/cuda/bin:$PATH
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH 
+    
+ 
+    # ── LIBTORCH ───────────────────────────────────────────────────
+    #    NOTE: libtorch-shared-with-deps-2.11.0+cu128.zip
+    #          built on top of Caffe2 tensor/operator internals
+    printf "\n\nInstallation of LibTorch\n"
+    cd /opt
+    # TODO(reproducibility): pin/verify with a known-good hash, e.g.:
+    #   echo "<expected-sha256>  libtorch-shared-with-deps-2.11.0+cu128.zip" | sha256sum -c -
+    wget https://download.pytorch.org/libtorch/cu128/libtorch-shared-with-deps-2.11.0%2Bcu128.zip
+    unzip libtorch-shared-with-deps-2.11.0+cu128.zip
+    rm libtorch-shared-with-deps-2.11.0+cu128.zip
+    mv libtorch libtorch-gpu
+    
+
+    # ── MKL ──────────────────────────────────────────────────────── 
+    printf "\n\nInstallation of MKL\n" 
+    cd /opt
+    # Add Intel oneAPI APT repository
+    wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+         | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+         | tee /etc/apt/sources.list.d/oneAPI.list
+
+    apt-get update
+    apt-get -y install intel-oneapi-mkl-devel
+    export MKLROOT=/opt/intel/oneapi/mkl/latest
+    export LD_LIBRARY_PATH=$MKLROOT/lib/intel64:$LD_LIBRARY_PATH
+
+
+    # ── OPENMPI ────────────────────────────────────────────────────
+    printf "\n\nInstallation of OPENMPI\n"
+    # NOTE: libucx-dev is intentionally NOT used - Ubuntus packaged UCX is
+    # built without CUDA support, which silently defeats GPU-aware MPI.
+    # UCX is instead built from source below with --with-cuda, matching the
+    # CHPC production Spack build (see mpi.txt: ucx@1.19.0+cuda+dc+mlx5_dv).
+
+    apt-get -y install libhwloc-dev  libevent-dev libpmix-dev \
+               zlib1g-dev flex libnuma-dev libtool automake autoconf \
+               libibverbs-dev librdmacm-dev rdma-core
+
+    # CUDA stub libs (no GPU/driver present at container build time)
+    CUDA_STUBS=/usr/local/cuda/lib64/stubs
+
+    # Compilation flags 
+    # X64_64 & gcc>=11 
+    #   -march=x86-64-v2  means the inclusion of SSE3/SSSE3/SSE4.1/SSE4.2/POPCNT
+    #   These flags were chosen to ensure that OpenMPIS can run on older CPUs
+    export CFLAGS="-O2 -march=x86-64-v2"
+    export CXXFLAGS="-O2 -march=x86-64-v2"
+    export FCFLAGS="-O2 -march=x86-64-v2"
+
+    # ── UCX (CUDA-aware) ─────────────────────────────────────────────
+    printf "\n\nInstallation of UCX (CUDA-aware, matches production build)\n"
+    cd /opt
+    wget https://github.com/openucx/ucx/releases/download/v{{ UCX_VERSION }}/ucx-{{ UCX_VERSION }}.tar.gz
+    echo "{{ UCX_SHA256 }} ucx-{{ UCX_VERSION }}.tar.gz" | sha256sum -c -
+    tar -xzf ucx-{{ UCX_VERSION }}.tar.gz
+    rm ucx-{{ UCX_VERSION }}.tar.gz
+    cd ucx-{{ UCX_VERSION }}
+    ./configure --prefix=/opt/ucx/{{ UCX_VERSION }} \
+         --with-cuda=/usr/local/cuda \
+         --enable-mt \
+         --with-verbs \
+         --with-rdmacm \
+         --disable-static
+    make -j {{ NTASKS }}
+    make install
+    
+    rm -rf /opt/ucx-{{ UCX_VERSION }}
+    export PATH=/opt/ucx/{{ UCX_VERSION }}/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/ucx/{{ UCX_VERSION }}/lib:$LD_LIBRARY_PATH
+
+    # ── OpenMPI as such ───────────────────────────────────────────────
+    cd /opt
+    # Get source code
+    wget https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-{{ OPENMPI_VERSION }}.tar.gz
+    echo "{{ OPENMPI_SHA256 }}  openmpi-{{ OPENMPI_VERSION }}.tar.gz" | sha256sum -c -
+    tar -xzf openmpi-{{ OPENMPI_VERSION }}.tar.gz
+    rm openmpi-{{ OPENMPI_VERSION }}.tar.gz 
+
+    # Compilation flags
+    # X64_64 & gcc>=11
+    #   -march=x86-64-v2  means the inclusion of SSE3/SSSE3/SSE4.1/SSE4.2/POPCNT
+    #   These flags were chosen to ensure that OpenMPIS can run on older CPUs
+    #   -DYY_BUF_SIZE=1048576 works around a flex-generated parser buffer
+    #   overflow in OpenMPIs configure/help-file parsing (matches the
+    #   production Spack build in mpi.txt).
+    export CFLAGS="-O2 -march=x86-64-v2 -DYY_BUF_SIZE=1048576"
+    export CXXFLAGS="-O2 -march=x86-64-v2"
+    export FCFLAGS="-O2 -march=x86-64-v2"
+
+    # Compilation/installation as such
+    apt-get install -y libslurm-dev
+    cd openmpi-{{ OPENMPI_VERSION }}
+    ./configure --prefix=/opt/openmpi/{{ OPENMPI_VERSION }} \
+         CC=gcc CXX=g++ FC=gfortran \
+         CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" FCFLAGS="$FCFLAGS" \
+         --with-cuda=/usr/local/cuda \
+         --with-cuda-libdir="$CUDA_STUBS" \
+         --with-ucx=/opt/ucx/{{ UCX_VERSION }} \
+         --with-ucx-libdir=/opt/ucx/{{ UCX_VERSION }}/lib \
+         --with-pmix=/usr \
+         --with-pmix-libdir=/usr/lib/x86_64-linux-gnu \
+         --with-hwloc=/usr \
+         --with-hwloc-libdir=/usr/lib/x86_64-linux-gnu \
+         --enable-shared \
+         --disable-static \
+         --enable-mpi-fortran=yes \
+         --enable-mpi1-compatibility \
+         --enable-builtin-atomics \
+         --enable-dlopen \
+         --enable-wrapper-rpath --disable-wrapper-runpath \
+         --disable-debug \
+         --disable-memchecker \
+         --disable-java --disable-mpi-java \
+         --disable-io-romio \
+         --with-gpfs=no \
+         --with-slurm \
+         --enable-mca-no-build=plm-slurm  
+
+    make -j {{ NTASKS }} VERBOSE=1
+    make install
+    
+    # Cleanup
+    rm -rf /opt/openmpi-{{ OPENMPI_VERSION }}
+
+    # Set env. VARIABLES
+    export PATH=/opt/openmpi/{{ OPENMPI_VERSION }}/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/openmpi/{{ OPENMPI_VERSION }}/lib:$LD_LIBRARY_PATH 
+ 
+    # CHECK
+    printf "  which mpicc:%s\n"  "$(which mpicc)"
+    printf "  which mpirun:%s\n" "$(which mpirun)"
+    printf "  ompi_info:\n%s\n"  "$(ompi_info | head -20)"
+
+    printf "\n\n*** START CLEANUP ***\n"
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf \
+        /var/lib/apt/lists/* \
+        /var/cache/apt/*.bin \
+        /var/cache/apt/archives/* 
+
+    # Set the exact timestamp of creation in the container
+    echo "export CONTAINER_TIMESTAMP=\"$(date)\"" >> /.singularity.d/env/90-environment.sh
+    
+
+
+
+# NOTE (on %environment section)
+#  - contains environmental variables AVAILABLE at RUNTIME, NOT at build time
+#  - if you need the same environmental variables at BUILD time, put them in the %post section. 
+#    a. Apptainer utilizes the hosts unpriviliged user namespace (setuid wrapper) 
+#       in order to avoid requiring root access
+#    
+%environment
+    export LANG=en_US.UTF-8
+    export PATH=/usr/local/cuda/bin:$PATH
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export MKLROOT=/opt/intel/oneapi/mkl/latest
+    export LD_LIBRARY_PATH=$MKLROOT/lib/intel64:$LD_LIBRARY_PATH
+    export PATH=/opt/ucx/{{ UCX_VERSION }}/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/ucx/{{ UCX_VERSION }}/lib:$LD_LIBRARY_PATH
+    export PATH=/opt/openmpi/{{ OPENMPI_VERSION }}/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/openmpi/{{ OPENMPI_VERSION }}/lib:$LD_LIBRARY_PATH
+
+
+
+# NOTE (on %test section)
+#   - Runs at the END of the build, inside the container. A minimal smoke
+#     test here fails the base.sif build fast if a core toolchain piece is
+#     missing/broken, rather than surfacing ~30+ minutes into the much
+#     longer compound.def LAMMPS build layered on top of this image.
+%test
+    set -eu
+    printf "\n\n*** START TEST ***\n"
+    printf "Container was created @ %s\n"  "$(date)"
+    printf "Toolchain sanity check:\n"
+    printf "   nvcc    : %s\n"  "$(nvcc --version)"
+    printf "   mpicc   : %s\n"  "$(mpicc --show)"
+    printf "   mpirun  : %s\n"  "$(mpirun --version)"
+    printf "   python3 : %s\n"  "$(python3 --version)"
+    printf "*** END TEST ***\n"

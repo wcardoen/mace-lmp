@@ -1,4 +1,4 @@
-# Written by Wim R.M. Cardoen (wim.cardoen@utah.edu)
+# Written by Wim R.M. Cardoen (wcardoen@gmail.com)
 #   Audentes fortuna iuvat!
 
 

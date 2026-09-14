@@ -1,0 +1,99 @@
+# ------------------------------------------------------------------
+# LAMMPS input: NVT MD with MACE-OFF23 (medium) ML interatomic potential
+# Model: MACE-OFF23_medium.model-lammps.pt
+#
+# EDIT THESE BEFORE RUNNING:
+#   1. "data.system"      -> your actual LAMMPS data file
+#   2. the element list on the pair_coeff line -> must match, in order,
+#      the atom TYPES you defined in your data file (a subset of the
+#      10 elements MACE-OFF23 was trained on: H C N O F P S Cl Br I)
+#   3. group/region/thermodynamic settings -> your actual system
+# ------------------------------------------------------------------
+
+units           metal
+boundary        p p p
+atom_style      atomic
+atom_modify     map yes
+newton          on off          # "newton on off" = newton_pair on, newton_bond off.
+                                 # pair_style mace requires newton pair ON.
+                                 # KOKKOS full-neighbor-list mode requires
+                                 # newton bond OFF (moot anyway: atom_style
+                                 # atomic has no bonded terms).
+
+# ---- geometry / topology ----
+read_data       data.system
+
+# ---- MACE pair style ----
+# no_domain_decomposition: recommended for a single MPI rank + threading
+# (typical for small-to-medium systems). Drop it if you are running
+# genuine multi-rank domain decomposition on a large system.
+pair_style      mace no_domain_decomposition
+pair_coeff      * * MACE-OFF23_medium.model-lammps.pt H C N O
+
+# ---- neighbor settings ----
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+# ---- timestep ----
+# MACE-OFF23 is an all-electron organic-chemistry potential with
+# explicit H; use a conservative fs-scale timestep.
+timestep        0.0005          # 0.5 fs
+
+# ---- common variables ----
+variable        Tinit  equal 300.0
+variable        Trun   equal 300.0
+variable        Patm   equal 1.01325     # 1 atm in bar (metal units use bar)
+
+thermo_style    custom step temp pe ke etotal press vol density
+thermo          10
+
+# ------------------------------------------------------------------
+# Stage 0: energy minimization
+# The packmol-packed box was placed with a finite distance tolerance,
+# not energy-minimized, so there can be close contacts / large initial
+# forces. Minimize before assigning velocities or running dynamics.
+# ------------------------------------------------------------------
+min_style       cg
+minimize        1.0e-6 1.0e-8 1000 10000
+
+reset_timestep  0
+
+# ---- initial velocities (after minimization) ----
+velocity        all create ${Tinit} 12345 mom yes rot yes dist gaussian
+
+# ------------------------------------------------------------------
+# Stage 1: short NVT relaxation at fixed volume
+# Lets local structure (bond lengths, close contacts) relax under
+# real dynamics before the box is allowed to change size.
+# ------------------------------------------------------------------
+fix             1 all nvt temp ${Tinit} ${Trun} $(100.0*dt)
+run             2000                     # 1 ps
+unfix           1
+
+# ------------------------------------------------------------------
+# Stage 2: NPT equilibration
+# Lets the box find its equilibrium volume/density under MACE-OFF23
+# at 1 atm, 300 K. Isotropic coupling assumes a homogeneous liquid;
+# switch to "aniso" if your system is anisotropic (e.g. a crystal).
+# ------------------------------------------------------------------
+fix             2 all npt temp ${Tinit} ${Trun} $(100.0*dt) &
+                        iso ${Patm} ${Patm} $(1000.0*dt)
+run             4000                     # 2 ps
+unfix           2
+
+write_data      data.system.after_npt_equil nocoeff
+
+# ------------------------------------------------------------------
+# Stage 3: production
+# Continues at the NPT-equilibrated volume. Switch to NVT here instead
+# if you want fixed-volume production once the density has converged.
+# ------------------------------------------------------------------
+fix             3 all npt temp ${Tinit} ${Trun} $(100.0*dt) &
+                        iso ${Patm} ${Patm} $(1000.0*dt)
+
+dump            1 all custom 100 dump.mace_off23.lammpstrj id type element x y z
+dump_modify     1 element H C N O sort id
+
+run             2000                     # 1 ps production (still smoke-test scale)
+
+write_data      data.system.after_production nocoeff

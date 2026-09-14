@@ -1,3 +1,4 @@
 # mace-lmp
 Repo with instructions to build mace-lmp containers
-Autor: Wim R.M. Cardoen
+Author: Wim R.M. Cardoen
+Email: wcardoen@gmail.com

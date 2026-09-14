@@ -1,0 +1,82 @@
+# Foundation Models:
+# =================
+
+PART 1: DOWNLOAD models
+======
+I downloaded two types of foundaton models
+- models 1
+- models 2
+
+# Models 1:
+# --------
+# The main page: 
+#     https://github.com/ACEsuit/mace-foundations
+# MACE pre-trained foundation models for materials chemistry, 
+# parameterised for 89 chemical elements.
+# The models are:
+#  MACE_MP_0a           (small/medium/large)
+#  MACE_MP_0b           (small/medium)
+#  MACE_MP_0b2          (small/medium/large)
+#  MACE_MP_0b3          (medium)
+#  MACE_MPA-0           (medium)
+#  MACE_OMAT-0          (small/medium)
+#  MACE-MATPES-PBE-0    (medium)
+#  MACE-MATPES-r2SCAN-0 (medium)
+#  MACE-OMOL-0          (extra-large/extra-large (4M))
+#  MACE-MH-{0/1}        (https://huggingface.co/mace-foundations/mace-mh-1)
+#  --- Other ---
+#  MACE-MDP             (https://chemrxiv.org/doi/full/10.26434/chemrxiv.15000716)
+
+I wrote a script download.sh to download them
+
+# Models 2:
+# --------
+cd /scratch/general/vast/app-repo/mace-foundations
+git clone https://github.com/ACEsuit/mace-off models2
+
+
+
+PART 2: Conversion to the LAMMPS format
+======
+In order to use these models into LAMMPS 
+we need to convert them to the LAMMPS format
+
+[u0253283@notchpeak1:~]$ salloc --nodes=1 --ntasks=6 --mem=40GB \
+           --account=notchpeak-shared-short --partition=notchpeak-shared-short --time=02:00:00
+salloc: Pending job allocation 15569609
+salloc: job 15569609 queued and waiting for resources
+salloc: job 15569609 has been allocated resources
+salloc: Granted job allocation 15569609
+salloc: Waiting for resource configuration
+salloc: Nodes notch309 are ready for job
+
+# Load mace
+[u0253283@notch309:~]$ module load mace
+[u0253283@notch309:~]$ python3
+Python 3.13.13 (main, May 10 2026, 19:26:54) [Clang 22.1.3 ] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import mace
+>>> mace.__version__
+'0.3.16'
+
+# Conversion as such
+[u0253283@notch309:u0253283]$ export REPO_DIR=/scratch/general/vast/app-repo/mace-foundations/models2/mace_off23
+[u0253283@notch309:u0253283]$ cp -p $REPO_DIR/MACE-OFF23_medium.model .
+[u0253283@notch309:u0253283]$ which mace_create_lammps_model
+/uufs/chpc.utah.edu/sys/installdir/r8/mace/0.3.16_cu128/.venv/bin/mace_create_lammps_model
+[u0253283@notch309:u0253283]$ mace_create_lammps_model MACE-OFF23_medium.model
+/uufs/chpc.utah.edu/sys/installdir/r8/mace/0.3.16_cu128/.venv/lib/python3.13/site-packages/e3nn/o3/_wigner.py:10: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, since the`weights_only` argument was not explicitly passed to `torch.load`, forcing weights_only=False.
+  _Jd, _W3j_flat, _W3j_indices = torch.load(os.path.join(os.path.dirname(__file__), 'constants.pt'))
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+/uufs/chpc.utah.edu/sys/installdir/r8/mace/0.3.16_cu128/.venv/lib/python3.13/site-packages/mace/cli/create_lammps_model.py:79: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, since the`weights_only` argument was not explicitly passed to `torch.load`, forcing weights_only=False.
+  model = torch.load(
+Only one head found in the model: None. Skipping selection.
+/uufs/chpc.utah.edu/common/home/hpcapps/.local/share/uv/python/cpython-3.13.13-linux-x86_64-gnu/lib/python3.13/ast.py:422: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  return visitor(node)
+[u0253283@notch309:u0253283]$ ls -alrt
+total 35960
+-rw-r--r-- 1 u0253283 hpcapps 18350596 Aug 31 15:59 MACE-OFF23_medium.model
+drwxrwxrwt 2 root     root        4096 Sep 14 11:31 ..
+drwxr-xr-x 2 u0253283 chpc        4096 Sep 14 11:48 .
+-rw-r--r-- 1 u0253283 chpc    18470950 Sep 14 11:48 MACE-OFF23_medium.model-lammps.pt
+

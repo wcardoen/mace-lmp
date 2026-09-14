@@ -1,0 +1,75 @@
+# Written by Wim R.M. Cardoen
+
+# INSTALLATION of MACE:
+# --------------------
+CUDA 12.8: Supports architectures from [MAXWELL 5.0 -> BLACKWELL]
+# Note:
+- Since PyTorch 2.8, the cu128/cu129 wheels dropped everything below Turing:
+- cu126 wheels: sm_50, 60, 70, 75, 80, 86, 90 → Maxwell through Hopper. No Blackwell.
+
+
+# A.cu128:
+#   =====
+
+# 1.Install python:
+#   --------------
+module load uv
+export UV_LINK_MODE=copy
+cd /uufs/chpc.utah.edu/sys/installdir/r8/mace/
+
+uv init 0.3.16_cu128
+cd 0.3.16_cu128
+uv python install 3.13 -v
+uv python pin 3.13 -v
+
+
+# 2.Edit the .toml file:
+#   -------------------
+# I have edited the .toml file:
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+
+# 3.Further:
+#   -------
+uv add torch 
+uv add mace-torch==0.3.16
+
+
+# 4.Add path:
+#   --------
+export PATH=/uufs/chpc.utah.edu/sys/installdir/r8/mace/0.3.16_cu128/.venv/bin:$PATH
+
+[u0253283@notch004:bin]$ python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list())"
+
+2.11.0+cu128 12.8
+['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']
+
+uv python pin 3.13 -v
+
+
+# 5.Check:
+#    ----
+python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list())"
+
+
+# B.cu126:
+#   =====
+# Most important changes for cu126
+
+# Edit the .toml file:
+# -------------------
+# I have edited the .toml file:
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
